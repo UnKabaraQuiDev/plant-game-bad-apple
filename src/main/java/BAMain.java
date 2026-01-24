@@ -32,7 +32,7 @@ public class BAMain {
 
 		final Rect manifestSize = OBJECT_MAPPER.readValue(new File(dataDir, ".manifest.json"), Rect.class);
 
-		final int upscale = 4;
+		final int upscale = 6;
 
 		final GameLogic gameLogic = new BALogic(manifestSize.width(), manifestSize.height());
 

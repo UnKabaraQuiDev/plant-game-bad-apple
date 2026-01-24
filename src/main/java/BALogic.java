@@ -3,6 +3,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -20,8 +22,12 @@ import lu.kbra.plant_game.engine.UpdateFrameState;
 import lu.kbra.plant_game.engine.data.locale.LocalizationService;
 import lu.kbra.plant_game.engine.entity.go.factory.GameObjectFactory;
 import lu.kbra.plant_game.engine.entity.ui.factory.UIObjectFactory;
+import lu.kbra.plant_game.engine.entity.ui.text.AnchoredProgrammaticTextUIObject;
+import lu.kbra.plant_game.engine.entity.ui.text.ProgrammaticTextUIObject;
 import lu.kbra.plant_game.engine.render.DeferredCompositor;
 import lu.kbra.plant_game.engine.scene.ui.UIScene;
+import lu.kbra.plant_game.engine.scene.ui.layout.Anchor;
+import lu.kbra.plant_game.engine.scene.ui.layout.AnchorLayout;
 import lu.kbra.plant_game.engine.scene.world.WorldLevelScene;
 import lu.kbra.plant_game.engine.util.InternalConstructorFunction;
 import lu.kbra.plant_game.engine.util.annotation.DataPath;
@@ -48,6 +54,8 @@ public class BALogic extends GameLogic {
 	protected int inputWidth;
 	protected int inputHeight;
 
+	protected ObjectPointer<ProgrammaticTextUIObject> text = new ObjectPointer<ProgrammaticTextUIObject>();
+
 	public BALogic(int inputWidth, int inputHeight) {
 		this.inputWidth = inputWidth;
 		this.inputHeight = inputHeight;
@@ -67,20 +75,35 @@ public class BALogic extends GameLogic {
 		worldScene = new WorldLevelScene("worldScene", cache);
 		worldScene.getCamera().lookAt(new Vector3f(0, 100, 0), GameEngine.IDENTITY_VECTOR3F, new Vector3f(0, 0, -1));
 		worldScene.getCamera().setPosition(new Vector3f(inputWidth / 2, 100, inputHeight / 2));
+		worldScene.getCamera().getProjection().setFov(1.59f);
 		worldScene.getCamera().updateMatrix();
-		uiScene = new UIScene("uiScene", cache);
+		uiScene = new LayoutUIScene("uiScene", cache, new AnchorLayout());
 		uiScene.getCamera().getProjection().update(inputWidth, inputHeight);
 
 		compositor = new DeferredCompositor(engine, engine.getRenderThread());
 
-		GameObjectRegistry.DATA_PATH.put(CubeGameObject.class, CubeGameObject.class.getAnnotation(DataPath.class).value());
-		GameObjectRegistry.GAME_OBJECT_CONSTRUCTORS.put(CubeGameObject.class,
+		GameObjectRegistry.DATA_PATH.put(PlaneGameObject.class, PlaneGameObject.class.getAnnotation(DataPath.class).value());
+		GameObjectRegistry.GAME_OBJECT_CONSTRUCTORS.put(PlaneGameObject.class,
 				List.of(new InternalConstructorFunction<>(new Class[] { String.class, Mesh.class },
-						(args) -> new CubeGameObject((String) args[0], (Mesh) args[1]))));
+						(args) -> new PlaneGameObject((String) args[0], (Mesh) args[1]))));
 
 		UIObjectFactory.INSTANCE = new UIObjectFactory(uiScene.getCache(), this.WORKERS, this.RENDER_DISPATCHER);
 		GameObjectFactory.INSTANCE = new GameObjectFactory(this.worldScene.getCache(), this.WORKERS, this.RENDER_DISPATCHER);
 		LocalizationService.INSTANCE = new LocalizationService(Locale.US);
+
+		UIObjectFactory
+				.createText(AnchoredProgrammaticTextUIObject.class,
+						OptionalInt.of(12),
+						Optional.empty(),
+						Optional.empty(),
+						Optional.empty(),
+						Optional.empty())
+				.set(i -> i.setText("FPS: xx/xx"))
+				.set(i -> i.setTransform(new Transform3D(0.25f)))
+				.set(i -> i.setAnchors(Anchor.TOP_LEFT, Anchor.TOP_LEFT))
+				.get(text)
+				.add(uiScene)
+				.push();
 
 //		final List<Rect> rects = BAComputeMain.extract(new File("./.local/export/000176.png"));
 //		BAComputeMain.visualize(new File("./.local/export/000176.png"), new File("./.local/data/000176~.png"), rects);
@@ -108,9 +131,7 @@ public class BALogic extends GameLogic {
 		this.frameState.reset();
 		this.inputHandler.onFrameBegin(dTime);
 
-		if (this.uiScene != null) {
-			this.uiScene.input(this.inputHandler, this.frameState);
-		}
+		this.uiScene.input(this.inputHandler, this.frameState);
 		this.worldScene.input(this.inputHandler, this.frameState);
 
 		if (this.inputHandler.isKeyPressedOnce(GLFW.GLFW_KEY_H)) {
@@ -128,6 +149,8 @@ public class BALogic extends GameLogic {
 			sourcePool.getFreeSource().play(audio.get());
 		}
 
+		uiScene.update(inputHandler, compositor, WORKERS, RENDER_DISPATCHER);
+
 		this.worldScene.update(this.inputHandler, compositor, WORKERS, RENDER_DISPATCHER);
 	}
 
@@ -138,11 +161,12 @@ public class BALogic extends GameLogic {
 		worldScene.getCamera().getProjection().update(window.getWidth(), window.getHeight());
 		compositor.render(engine, worldScene, uiScene);
 
-		frameCount.increment();
+		text.ifSet(t -> t.setText("FPS: " + (engine.targetFps / (frameCount.getValue() + 1)) + "/" + engine.targetFps).updateText());
 
-		if (frameCount.getValue() > 1) {
+		if (frameCount.getValue() > 0) {
 			System.err.println("frame dropped: " + frameCount.getValue());
 		}
+		frameCount.increment();
 
 		if (currentFrameDone.getValue() && currentFrame.getValue() < 6572) {
 			currentFrameDone.set(false);
@@ -159,7 +183,7 @@ public class BALogic extends GameLogic {
 						return;
 					}
 
-					final ListTriggerLatch<CubeGameObject> latch = new ListTriggerLatch<CubeGameObject>(rects.size(), (l) -> {
+					final ListTriggerLatch<PlaneGameObject> latch = new ListTriggerLatch<PlaneGameObject>(rects.size(), (l) -> {
 						synchronized (worldScene.getEntitiesLock()) {
 							worldScene.getEntities().clear();
 						}
@@ -178,7 +202,7 @@ public class BALogic extends GameLogic {
 					});
 
 					rects.stream()
-							.forEach(r -> GameObjectFactory.create(CubeGameObject.class)
+							.forEach(r -> GameObjectFactory.create(PlaneGameObject.class)
 									.set(i -> i.setTransform(toTransform(r)))
 									.set(i -> i.setColorMaterial(colorByArea.get(Integer.highestOneBit(r.area()))))
 									.add(worldScene)

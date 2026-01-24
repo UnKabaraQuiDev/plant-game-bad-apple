@@ -49,6 +49,7 @@ public class BAComputeMain {
 					visualize(f, new File(dataDir, PCUtils.removeFileExtension(f.getName()) + "~.png"), rects);
 				} catch (Exception e) {
 					e.printStackTrace();
+					exec.shutdown();
 				}
 			});
 		}
