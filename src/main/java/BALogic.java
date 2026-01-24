@@ -1,3 +1,7 @@
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.event.WindowEvent;
 import java.io.File;
 import java.util.HashMap;
 import java.util.List;
@@ -5,7 +9,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+
+import org.apache.commons.collections4.queue.CircularFifoQueue;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
@@ -13,17 +23,19 @@ import org.lwjgl.glfw.GLFW;
 import com.fasterxml.jackson.core.type.TypeReference;
 
 import lu.pcy113.pclib.PCUtils;
-import lu.pcy113.pclib.concurrency.ListTriggerLatch;
 import lu.pcy113.pclib.pointer.ObjectPointer;
-import lu.pcy113.pclib.pointer.prim.BooleanPointer;
 import lu.pcy113.pclib.pointer.prim.IntPointer;
+import lu.pcy113.pclib.swing.JLineGraph;
+import lu.pcy113.pclib.swing.JLineGraph.ChartData;
 
 import lu.kbra.plant_game.engine.UpdateFrameState;
 import lu.kbra.plant_game.engine.data.locale.LocalizationService;
+import lu.kbra.plant_game.engine.entity.go.GameObject;
 import lu.kbra.plant_game.engine.entity.go.factory.GameObjectFactory;
 import lu.kbra.plant_game.engine.entity.ui.factory.UIObjectFactory;
 import lu.kbra.plant_game.engine.entity.ui.text.AnchoredProgrammaticTextUIObject;
 import lu.kbra.plant_game.engine.entity.ui.text.ProgrammaticTextUIObject;
+import lu.kbra.plant_game.engine.loader.StaticInstanceLoader;
 import lu.kbra.plant_game.engine.render.DeferredCompositor;
 import lu.kbra.plant_game.engine.scene.ui.UIScene;
 import lu.kbra.plant_game.engine.scene.ui.layout.Anchor;
@@ -34,9 +46,9 @@ import lu.kbra.plant_game.engine.util.annotation.DataPath;
 import lu.kbra.plant_game.engine.window.input.MappingInputHandler;
 import lu.kbra.plant_game.generated.ColorMaterial;
 import lu.kbra.plant_game.generated.GameObjectRegistry;
-import lu.kbra.standalone.gameengine.GameEngine;
 import lu.kbra.standalone.gameengine.audio.ALSourcePool;
 import lu.kbra.standalone.gameengine.audio.Sound;
+import lu.kbra.standalone.gameengine.cache.attrib.UByteAttribArray;
 import lu.kbra.standalone.gameengine.geom.Mesh;
 import lu.kbra.standalone.gameengine.geom.instance.InstanceEmitter;
 import lu.kbra.standalone.gameengine.impl.GameLogic;
@@ -44,6 +56,10 @@ import lu.kbra.standalone.gameengine.impl.future.WorkerDispatcher;
 import lu.kbra.standalone.gameengine.utils.transform.Transform3D;
 
 public class BALogic extends GameLogic {
+
+	private static final int FRAME_COUNT = 6572;
+	private static final int PART_COUNT = 2500;
+	private static final int HISTORY_LEN = 6572;
 
 	public final WorkerDispatcher WORKERS = new WorkerDispatcher("WORKERS", 8);
 
@@ -55,20 +71,31 @@ public class BALogic extends GameLogic {
 	protected int inputWidth;
 	protected int inputHeight;
 
-	protected ObjectPointer<ProgrammaticTextUIObject> text = new ObjectPointer<ProgrammaticTextUIObject>();
+//	protected ObjectPointer<ProgrammaticTextUIObject> text = new ObjectPointer<>();
 
 	public BALogic(int inputWidth, int inputHeight) {
 		this.inputWidth = inputWidth;
 		this.inputHeight = inputHeight;
 	}
 
-	protected IntPointer currentFrame = new IntPointer(-1);
-	protected BooleanPointer currentFrameDone = new BooleanPointer(true);
-
 	protected ObjectPointer<Sound> audio;
 	protected ALSourcePool sourcePool;
 
 	protected ObjectPointer<PlaneInstanceGameObject> insts = new ObjectPointer<>();
+
+	protected ExecutorService executor = Executors.newFixedThreadPool(4);
+	protected PrefetchingSortedQueue<List<Rect>> queue = new PrefetchingSortedQueue<>(0, FRAME_COUNT - 1, executor) {
+		@Override
+		protected List<Rect> load(int index) {
+			try {
+				return BALogic.this.load(new File("./.local/data/" + PCUtils.leftPadString(Integer.toString(index), "0", 6) + ".json"));
+			} catch (Exception e) {
+				e.printStackTrace();
+				BALogic.this.stop();
+				return null;
+			}
+		}
+	};
 
 	@Override
 	public void init() throws Exception {
@@ -76,7 +103,8 @@ public class BALogic extends GameLogic {
 		inputHandler.setOwner(this.engine.getUpdateThread());
 
 		worldScene = new WorldLevelScene("worldScene", cache);
-		worldScene.getCamera().lookAt(new Vector3f(0, 100, 0), GameEngine.IDENTITY_VECTOR3F, new Vector3f(0, 0, -1));
+//		worldScene.getCamera().lookAt(new Vector3f(0, 100, 0), GameEngine.IDENTITY_VECTOR3F, new Vector3f(0, 0, -1));
+		worldScene.getCamera().getRotation().rotationX((float) Math.PI / 2);
 		worldScene.getCamera().setPosition(new Vector3f(inputWidth / 2, 100, inputHeight / 2));
 		worldScene.getCamera().getProjection().setFov(1.59f);
 		worldScene.getCamera().updateMatrix();
@@ -100,28 +128,81 @@ public class BALogic extends GameLogic {
 		GameObjectFactory.INSTANCE = new GameObjectFactory(this.worldScene.getCache(), this.WORKERS, this.RENDER_DISPATCHER);
 		LocalizationService.INSTANCE = new LocalizationService(Locale.US);
 
-		GameObjectFactory.createInstances(PlaneInstanceGameObject.class, i -> new Transform3D(), OptionalInt.of(1024), Optional.empty())
+		if (StaticInstanceLoader.MAX_INSTANCE_BUFFER_LENGTH < PART_COUNT) {
+			StaticInstanceLoader.MAX_INSTANCE_BUFFER_LENGTH = PART_COUNT;
+		}
+
+		GameObjectFactory
+				.createInstances(PlaneInstanceGameObject.class,
+						i -> new Transform3D(),
+						OptionalInt.of(PART_COUNT),
+						Optional.empty(),
+						() -> new UByteAttribArray(GameObject.MESH_ATTRIB_MATERIAL_ID_NAME,
+								GameObject.MESH_ATTRIB_MATERIAL_ID_ID,
+								new byte[PART_COUNT],
+								false,
+								1))
+				.set(i -> i.setIsEntityMaterialId(false))
 				.add(worldScene)
 				.get(insts)
 				.push();
 
-		UIObjectFactory
-				.createText(AnchoredProgrammaticTextUIObject.class,
-						OptionalInt.of(12),
-						Optional.empty(),
-						Optional.empty(),
-						Optional.empty(),
-						Optional.empty())
-				.set(i -> i.setText("FPS: xx/xx"))
-				.set(i -> i.setTransform(new Transform3D(0.25f)))
-				.set(i -> i.setAnchors(Anchor.TOP_LEFT, Anchor.TOP_LEFT))
-				.get(text)
-				.add(uiScene)
-				.push();
+//		UIObjectFactory
+//				.createText(AnchoredProgrammaticTextUIObject.class,
+//						OptionalInt.of(20),
+//						Optional.empty(),
+//						Optional.empty(),
+//						Optional.empty(),
+//						Optional.empty())
+//				.set(i -> i.setText("FPS: xx/xx"))
+//				.set(i -> i.setTransform(new Transform3D(0.25f)))
+//				.set(i -> i.setAnchors(Anchor.TOP_LEFT, Anchor.TOP_LEFT))
+//				.get(text)
+//				.add(uiScene)
+//				.push();
 
-//		final List<Rect> rects = BAComputeMain.extract(new File("./.local/export/000176.png"));
-//		BAComputeMain.visualize(new File("./.local/export/000176.png"), new File("./.local/data/000176~.png"), rects);
+		lineGraph.setBackground(Color.WHITE);
+		lineGraph.setFixedPadding(40);
+		lineGraph.setUseFixedPadding(true);
+		lineGraph.setMinorAxisStep(500);
+
+//		final ChartData totalCount = lineGraph.createSeries("Total instances");
+//		totalCount.setFill(true);
+//		totalCount.setFillColor(Color.RED);
+//		final List<Double> total = new ArrayList<>();
+//		for(int i = 0; i < HISTORY_LEN; i++) {
+//			total.add((double) PART_COUNT);
+//		}
+//		System.err.println(total);
+//		totalCount.setValues(total);
+
+		final ChartData instancesCount = lineGraph.createSeries("Used instances");
+		instancesCount.setFill(true);
+		instancesCount.setFillColor(Color.BLUE);
+		instancesCount.setValues(instancesCountValues, i -> instancesCountValues.get(i));
+
+		final ChartData headCount = lineGraph.createSeries("Loaded frames");
+		headCount.setFill(false);
+		headCount.setBorderWidth(2);
+		headCount.setBorderColor(Color.RED);
+		headCount.setValues(headValues, i -> headValues.get(i));
+
+		text.setFont(new Font("Monospaced", Font.BOLD, 25));
+		text.setHorizontalAlignment(JLabel.CENTER);
+
+		internalFrame.setLayout(new BorderLayout());
+		internalFrame.add(text, BorderLayout.NORTH);
+		internalFrame.add(lineGraph, BorderLayout.CENTER);
+
+		internalFrame.setSize(850, 400);
+		internalFrame.setVisible(true);
 	}
+
+	protected JFrame internalFrame = new JFrame("Stats");
+	protected JLineGraph lineGraph = new JLineGraph();
+	protected JLabel text = new JLabel("FPS: xx/xx/xx");
+	protected CircularFifoQueue<Double> instancesCountValues = new CircularFifoQueue<>(HISTORY_LEN);
+	protected CircularFifoQueue<Double> headValues = new CircularFifoQueue<>(HISTORY_LEN);
 
 	public Transform3D toTransform(Rect r) {
 		return new Transform3D(new Vector3f((float) r.x() + r.width() / 2f, 0, (float) r.y() + r.height() / 2f),
@@ -172,76 +253,63 @@ public class BALogic extends GameLogic {
 	@Override
 	public void render(float dTime) {
 		worldScene.getCamera().getProjection().update(window.getWidth(), window.getHeight());
+		uiScene.getCamera().getProjection().update(window.getWidth(), window.getHeight());
 		compositor.render(engine, worldScene, uiScene);
+
+//		System.out.println("Head: " + queue.size());
+		headValues.offer((double) queue.size());
 
 		if (!insts.isSet()) {
 			return;
 		}
 
-		text.ifSet(t -> t.setText("FPS: " + (engine.targetFps / (frameCount.getValue() + 1)) + "/" + engine.targetFps).updateText());
+		text.setText(
+				"FPS: " + (engine.targetFps / (frameCount.getValue() + 1)) + "/" + (int) Math.floor(1f / dTime) + "/" + engine.targetFps);
 
-		if (frameCount.getValue() > 0) {
-			System.err.println("frame dropped: " + frameCount.getValue());
-		}
-		frameCount.increment();
+//		if (frameCount.getValue() > 0) {
+//			System.err.println("frame dropped: " + frameCount.getValue());
+//		}
 
-		if (currentFrameDone.getValue() && currentFrame.getValue() < 6572) {
-			currentFrameDone.set(false);
-			currentFrame.increment();
+		final Optional<List<Rect>> next = queue.poll();
 
-			WORKERS.post(() -> {
-				try {
-					final List<Rect> rects = load(
-							new File("./.local/data/" + PCUtils.leftPadString(Integer.toString(currentFrame.get()), "0", 6) + ".json"));
+		if (next.isPresent()) {
+			frameCount.set(0);
 
-					if (rects.isEmpty()) {
-						currentFrameDone.set(true);
-						frameCount.set(0);
-						insts.get().setActive(false);
-						return;
-					}
+			final List<Rect> rects = next.get();
 
-//					final ListTriggerLatch<PlaneGameObject> latch = new ListTriggerLatch<PlaneGameObject>(rects.size(), (l) -> {
-//						synchronized (worldScene.getEntitiesLock()) {
-//							worldScene.getEntities().clear();
-//						}
-//						worldScene.addAll(l);
-//						currentFrameDone.set(true);
-//						frameCount.set(0);
-//					});
+			instancesCountValues.offer((double) rects.size());
+			internalFrame.repaint();
 
-					Map<Integer, ColorMaterial> colorByArea = new HashMap<>();
+			if (rects.isEmpty()) {
+				insts.get().setActive(false);
+				return;
+			}
 
-					ObjectPointer<ColorMaterial> current = new ObjectPointer<>(ColorMaterial.RED);
+			final int actPartCount = insts.get().getInstanceEmitter().getParticleCount();
+			if (rects.size() > actPartCount) {
+				System.out.println("Too many rects needed: " + rects.size() + "/" + actPartCount);
+			}
 
-					rects.stream().map(r -> Integer.highestOneBit(r.area())).distinct().sorted().forEach(area -> {
-						colorByArea.put(area, current.get());
-						current.set(getNext(current.get()));
-					});
-
-					RENDER_DISPATCHER.post(() -> {
-						insts.get().getInstanceEmitter().update(inst -> {
-							if (inst.getIndex() < rects.size())
-								inst.setTransform(toTransform(rects.get(inst.getIndex())));
-						});
-						currentFrameDone.set(true);
-						frameCount.set(0);
-					});
-					insts.get().setActive(true);
-					insts.get().setParticleCount(rects.size());
-
-//					rects.stream()
-//							.forEach(r -> GameObjectFactory.create(PlaneGameObject.class)
-//									.set(i -> i.setTransform(toTransform(r)))
-//									.set(i -> i.setColorMaterial(colorByArea.get(Integer.highestOneBit(r.area()))))
-//									.add(worldScene)
-//									.latch(latch)
-//									.push());
-				} catch (Exception e) {
-					e.printStackTrace();
-					super.stop();
-				}
+			final Map<Integer, ColorMaterial> colorByArea = new HashMap<>();
+			final ObjectPointer<ColorMaterial> current = new ObjectPointer<>(ColorMaterial.RED);
+			rects.stream().map(r -> Integer.highestOneBit(r.area())).distinct().sorted().forEach(area -> {
+				colorByArea.put(area, current.get());
+				current.set(getNext(current.get()));
 			});
+
+			RENDER_DISPATCHER.post(() -> {
+				insts.get().getInstanceEmitter().update(inst -> {
+					if (inst.getIndex() < rects.size()) {
+						final Rect r = rects.get(inst.getIndex());
+						inst.setTransform(toTransform(r));
+						inst.getBuffers()[0] = (byte) (short) colorByArea.get(Integer.highestOneBit(r.area())).getId();
+					}
+				});
+			});
+			insts.get().setActive(true);
+			insts.get().setParticleCount(rects.size());
+		} else {
+			frameCount.increment();
 		}
 	}
 
@@ -256,7 +324,8 @@ public class BALogic extends GameLogic {
 
 	@Override
 	public void cleanup() {
-
+		compositor.cleanup();
+		internalFrame.dispatchEvent(new WindowEvent(internalFrame, WindowEvent.WINDOW_CLOSING));
 	}
 
 }
