@@ -38,6 +38,7 @@ import lu.kbra.standalone.gameengine.GameEngine;
 import lu.kbra.standalone.gameengine.audio.ALSourcePool;
 import lu.kbra.standalone.gameengine.audio.Sound;
 import lu.kbra.standalone.gameengine.geom.Mesh;
+import lu.kbra.standalone.gameengine.geom.instance.InstanceEmitter;
 import lu.kbra.standalone.gameengine.impl.GameLogic;
 import lu.kbra.standalone.gameengine.impl.future.WorkerDispatcher;
 import lu.kbra.standalone.gameengine.utils.transform.Transform3D;
@@ -67,6 +68,8 @@ public class BALogic extends GameLogic {
 	protected ObjectPointer<Sound> audio;
 	protected ALSourcePool sourcePool;
 
+	protected ObjectPointer<PlaneInstanceGameObject> insts = new ObjectPointer<>();
+
 	@Override
 	public void init() throws Exception {
 		inputHandler = new MappingInputHandler(this.engine);
@@ -87,9 +90,20 @@ public class BALogic extends GameLogic {
 				List.of(new InternalConstructorFunction<>(new Class[] { String.class, Mesh.class },
 						(args) -> new PlaneGameObject((String) args[0], (Mesh) args[1]))));
 
+		GameObjectRegistry.DATA_PATH.put(PlaneInstanceGameObject.class,
+				PlaneInstanceGameObject.class.getAnnotation(DataPath.class).value());
+		GameObjectRegistry.GAME_OBJECT_CONSTRUCTORS.put(PlaneInstanceGameObject.class,
+				List.of(new InternalConstructorFunction<>(new Class[] { String.class, InstanceEmitter.class },
+						(args) -> new PlaneInstanceGameObject((String) args[0], (InstanceEmitter) args[1]))));
+
 		UIObjectFactory.INSTANCE = new UIObjectFactory(uiScene.getCache(), this.WORKERS, this.RENDER_DISPATCHER);
 		GameObjectFactory.INSTANCE = new GameObjectFactory(this.worldScene.getCache(), this.WORKERS, this.RENDER_DISPATCHER);
 		LocalizationService.INSTANCE = new LocalizationService(Locale.US);
+
+		GameObjectFactory.createInstances(PlaneInstanceGameObject.class, i -> new Transform3D(), OptionalInt.of(1024), Optional.empty())
+				.add(worldScene)
+				.get(insts)
+				.push();
 
 		UIObjectFactory
 				.createText(AnchoredProgrammaticTextUIObject.class,
@@ -143,14 +157,13 @@ public class BALogic extends GameLogic {
 
 	@Override
 	public void update(float dTime) {
-		if (audio == null) {
+		if (insts.isSet() && audio == null) {
 			sourcePool = new ALSourcePool(super.getGameEngine().getAudioMaster(), 5);
 			audio = new ObjectPointer<>(new Sound("bad_apple", "./.local/bad_apple.ogg", true));
 			sourcePool.getFreeSource().play(audio.get());
 		}
 
-		uiScene.update(inputHandler, compositor, WORKERS, RENDER_DISPATCHER);
-
+		this.uiScene.update(inputHandler, compositor, WORKERS, RENDER_DISPATCHER);
 		this.worldScene.update(this.inputHandler, compositor, WORKERS, RENDER_DISPATCHER);
 	}
 
@@ -160,6 +173,10 @@ public class BALogic extends GameLogic {
 	public void render(float dTime) {
 		worldScene.getCamera().getProjection().update(window.getWidth(), window.getHeight());
 		compositor.render(engine, worldScene, uiScene);
+
+		if (!insts.isSet()) {
+			return;
+		}
 
 		text.ifSet(t -> t.setText("FPS: " + (engine.targetFps / (frameCount.getValue() + 1)) + "/" + engine.targetFps).updateText());
 
@@ -180,17 +197,18 @@ public class BALogic extends GameLogic {
 					if (rects.isEmpty()) {
 						currentFrameDone.set(true);
 						frameCount.set(0);
+						insts.get().setActive(false);
 						return;
 					}
 
-					final ListTriggerLatch<PlaneGameObject> latch = new ListTriggerLatch<PlaneGameObject>(rects.size(), (l) -> {
-						synchronized (worldScene.getEntitiesLock()) {
-							worldScene.getEntities().clear();
-						}
-						worldScene.addAll(l);
-						currentFrameDone.set(true);
-						frameCount.set(0);
-					});
+//					final ListTriggerLatch<PlaneGameObject> latch = new ListTriggerLatch<PlaneGameObject>(rects.size(), (l) -> {
+//						synchronized (worldScene.getEntitiesLock()) {
+//							worldScene.getEntities().clear();
+//						}
+//						worldScene.addAll(l);
+//						currentFrameDone.set(true);
+//						frameCount.set(0);
+//					});
 
 					Map<Integer, ColorMaterial> colorByArea = new HashMap<>();
 
@@ -201,13 +219,24 @@ public class BALogic extends GameLogic {
 						current.set(getNext(current.get()));
 					});
 
-					rects.stream()
-							.forEach(r -> GameObjectFactory.create(PlaneGameObject.class)
-									.set(i -> i.setTransform(toTransform(r)))
-									.set(i -> i.setColorMaterial(colorByArea.get(Integer.highestOneBit(r.area()))))
-									.add(worldScene)
-									.latch(latch)
-									.push());
+					RENDER_DISPATCHER.post(() -> {
+						insts.get().getInstanceEmitter().update(inst -> {
+							if (inst.getIndex() < rects.size())
+								inst.setTransform(toTransform(rects.get(inst.getIndex())));
+						});
+						currentFrameDone.set(true);
+						frameCount.set(0);
+					});
+					insts.get().setActive(true);
+					insts.get().setParticleCount(rects.size());
+
+//					rects.stream()
+//							.forEach(r -> GameObjectFactory.create(PlaneGameObject.class)
+//									.set(i -> i.setTransform(toTransform(r)))
+//									.set(i -> i.setColorMaterial(colorByArea.get(Integer.highestOneBit(r.area()))))
+//									.add(worldScene)
+//									.latch(latch)
+//									.push());
 				} catch (Exception e) {
 					e.printStackTrace();
 					super.stop();

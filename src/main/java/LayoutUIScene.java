@@ -1,14 +1,10 @@
 import java.util.stream.Collectors;
 
 import lu.kbra.plant_game.engine.entity.ui.UIObject;
-import lu.kbra.plant_game.engine.render.DeferredCompositor;
 import lu.kbra.plant_game.engine.scene.ui.UIScene;
 import lu.kbra.plant_game.engine.scene.ui.layout.Layout;
 import lu.kbra.plant_game.engine.scene.ui.layout.LayoutOwner;
-import lu.kbra.plant_game.engine.window.input.WindowInputHandler;
 import lu.kbra.standalone.gameengine.cache.CacheManager;
-import lu.kbra.standalone.gameengine.impl.future.Dispatcher;
-import lu.kbra.standalone.gameengine.impl.future.WorkerDispatcher;
 
 public class LayoutUIScene extends UIScene implements LayoutOwner {
 
