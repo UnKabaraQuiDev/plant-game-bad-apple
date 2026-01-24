@@ -39,6 +39,7 @@ public class BAMain {
 		final WindowOptions wo = new WindowOptions(props, "windowOptions");
 		wo.resizable = false;
 		wo.windowSize = new Vector2i(manifestSize.width(), manifestSize.height()).mul(upscale);
+		wo.fps = 30;
 
 		final GameEngine engine = new GameEngine("plant-game-bad-apple", gameLogic, wo);
 		engine.start();
