@@ -5,6 +5,9 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import javax.imageio.ImageIO;
 
@@ -14,7 +17,7 @@ public class BAComputeMain {
 
 	private static final int WHITE_THRESHOLD = 240; // 0..255
 	private static final int VARIANCE_LIMIT = 10;
-	private static final int MIN_SIZE = 2;
+	private static final int MIN_SIZE = 1;
 
 	protected static int width;
 	protected static int height;;
@@ -30,19 +33,30 @@ public class BAComputeMain {
 		}
 		dataDir.mkdirs();
 
+		final ExecutorService exec = Executors.newWorkStealingPool(20);
+
 		for (File f : exportDir.listFiles()) {
 			if (!"png".equals(PCUtils.getFileExtension(f.getName())) || f.getName().contains("~")) {
 				continue;
 			}
 
-			final List<Rect> rects = extract(f);
-			final String newFileName = PCUtils.replaceFileExtension(f.getName(), "json");
-			System.out.println("Exporting: " + newFileName);
-			BAMain.OBJECT_MAPPER.writeValue(new File(dataDir, newFileName), rects);
-			visualize(f, new File(dataDir, PCUtils.removeFileExtension(f.getName()) + "~.png"), rects);
+			exec.execute(() -> {
+				try {
+					final List<Rect> rects = extract(f);
+					final String newFileName = PCUtils.replaceFileExtension(f.getName(), "json");
+					System.out.println("Exporting: " + newFileName);
+					BAMain.OBJECT_MAPPER.writeValue(new File(dataDir, newFileName), rects);
+					visualize(f, new File(dataDir, PCUtils.removeFileExtension(f.getName()) + "~.png"), rects);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			});
 		}
 
 		BAMain.OBJECT_MAPPER.writeValue(new File(dataDir, ".manifest.json"), new Rect(0, 0, width, height));
+		
+		exec.shutdown();
+		exec.awaitTermination(10, TimeUnit.MINUTES);
 	}
 
 	public static void visualize(File inputImage, File outputImage, List<Rect> rects) throws Exception {
@@ -87,15 +101,15 @@ public class BAComputeMain {
 	}
 
 	private static void split(int[][] gray, int x, int y, int w, int h, List<Rect> out) {
+		if (w < MIN_SIZE || h < MIN_SIZE)
+			return;
+
 		if (isWhite(gray, x, y, w, h)) {
 			out.add(new Rect(x, y, w, h));
 			return;
-		}
-
-		if (w <= MIN_SIZE || h <= MIN_SIZE)
+		} else if (h == 1 || w == 1) {
 			return;
-
-//		System.err.println(x + ", " + y + " x " + w + ", " + h);
+		}
 
 		int hw = w / 2;
 		int hh = h / 2;

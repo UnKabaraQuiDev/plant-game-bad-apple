@@ -1,6 +1,8 @@
 import java.io.File;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -10,6 +12,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 
 import lu.pcy113.pclib.PCUtils;
 import lu.pcy113.pclib.concurrency.ListTriggerLatch;
+import lu.pcy113.pclib.pointer.ObjectPointer;
 import lu.pcy113.pclib.pointer.prim.BooleanPointer;
 import lu.pcy113.pclib.pointer.prim.IntPointer;
 
@@ -23,8 +26,11 @@ import lu.kbra.plant_game.engine.scene.world.WorldLevelScene;
 import lu.kbra.plant_game.engine.util.InternalConstructorFunction;
 import lu.kbra.plant_game.engine.util.annotation.DataPath;
 import lu.kbra.plant_game.engine.window.input.MappingInputHandler;
+import lu.kbra.plant_game.generated.ColorMaterial;
 import lu.kbra.plant_game.generated.GameObjectRegistry;
 import lu.kbra.standalone.gameengine.GameEngine;
+import lu.kbra.standalone.gameengine.audio.ALSourcePool;
+import lu.kbra.standalone.gameengine.audio.Sound;
 import lu.kbra.standalone.gameengine.geom.Mesh;
 import lu.kbra.standalone.gameengine.impl.GameLogic;
 import lu.kbra.standalone.gameengine.impl.future.WorkerDispatcher;
@@ -50,10 +56,13 @@ public class BALogic extends GameLogic {
 	protected IntPointer currentFrame = new IntPointer(-1);
 	protected BooleanPointer currentFrameDone = new BooleanPointer(true);
 
+	protected ObjectPointer<Sound> audio;
+	protected ALSourcePool sourcePool;
+
 	@Override
 	public void init() throws Exception {
-		this.inputHandler = new MappingInputHandler(this.engine);
-		this.inputHandler.setOwner(this.engine.getUpdateThread());
+		inputHandler = new MappingInputHandler(this.engine);
+		inputHandler.setOwner(this.engine.getUpdateThread());
 
 		worldScene = new WorldLevelScene("worldScene", cache);
 		worldScene.getCamera().lookAt(new Vector3f(0, 100, 0), GameEngine.IDENTITY_VECTOR3F, new Vector3f(0, 0, -1));
@@ -113,9 +122,15 @@ public class BALogic extends GameLogic {
 
 	@Override
 	public void update(float dTime) {
+		if (audio == null) {
+			sourcePool = new ALSourcePool(super.getGameEngine().getAudioMaster(), 5);
+			audio = new ObjectPointer<>(new Sound("bad_apple", "./.local/bad_apple.ogg", true));
+			sourcePool.getFreeSource().play(audio.get());
+		}
+
 		this.worldScene.update(this.inputHandler, compositor, WORKERS, RENDER_DISPATCHER);
 	}
-	
+
 	protected IntPointer frameCount = new IntPointer();
 
 	@Override
@@ -124,8 +139,12 @@ public class BALogic extends GameLogic {
 		compositor.render(engine, worldScene, uiScene);
 
 		frameCount.increment();
-		
-		if (currentFrameDone.getValue()) {
+
+		if (frameCount.getValue() > 1) {
+			System.err.println("frame dropped: " + frameCount.getValue());
+		}
+
+		if (currentFrameDone.getValue() && currentFrame.getValue() < 6572) {
 			currentFrameDone.set(false);
 			currentFrame.increment();
 
@@ -149,9 +168,19 @@ public class BALogic extends GameLogic {
 						frameCount.set(0);
 					});
 
+					Map<Integer, ColorMaterial> colorByArea = new HashMap<>();
+
+					ObjectPointer<ColorMaterial> current = new ObjectPointer<>(ColorMaterial.RED);
+
+					rects.stream().map(r -> Integer.highestOneBit(r.area())).distinct().sorted().forEach(area -> {
+						colorByArea.put(area, current.get());
+						current.set(getNext(current.get()));
+					});
+
 					rects.stream()
 							.forEach(r -> GameObjectFactory.create(CubeGameObject.class)
 									.set(i -> i.setTransform(toTransform(r)))
+									.set(i -> i.setColorMaterial(colorByArea.get(Integer.highestOneBit(r.area()))))
 									.add(worldScene)
 									.latch(latch)
 									.push());
@@ -161,6 +190,15 @@ public class BALogic extends GameLogic {
 				}
 			});
 		}
+	}
+
+	private ColorMaterial getNext(ColorMaterial colorMaterial) {
+		final ColorMaterial next = colorMaterial.next();
+		if (next == ColorMaterial.LIGHT_BLACK || next == ColorMaterial.DARK_BLACK || next == ColorMaterial.LIGHT_WHITE
+				|| next == ColorMaterial.DARK_BLACK) {
+			return getNext(next);
+		}
+		return next;
 	}
 
 	@Override

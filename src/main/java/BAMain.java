@@ -40,6 +40,8 @@ public class BAMain {
 		wo.resizable = false;
 		wo.windowSize = new Vector2i(manifestSize.width(), manifestSize.height()).mul(upscale);
 		wo.fps = 30;
+		wo.title = "Bad apple (Plant-game | deferred rendering)";
+//		wo.fullscreen = true;
 
 		final GameEngine engine = new GameEngine("plant-game-bad-apple", gameLogic, wo);
 		engine.start();
