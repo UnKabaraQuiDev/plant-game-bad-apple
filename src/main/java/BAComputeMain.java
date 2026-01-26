@@ -33,7 +33,8 @@ public class BAComputeMain {
 		}
 		dataDir.mkdirs();
 
-		final ExecutorService exec = Executors.newWorkStealingPool(20);
+		System.err.println("Procs: " + Runtime.getRuntime().availableProcessors());
+		final ExecutorService exec = Executors.newWorkStealingPool(Runtime.getRuntime().availableProcessors());
 
 		for (File f : exportDir.listFiles()) {
 			if (!"png".equals(PCUtils.getFileExtension(f.getName())) || f.getName().contains("~")) {
@@ -55,7 +56,7 @@ public class BAComputeMain {
 		}
 
 		BAMain.OBJECT_MAPPER.writeValue(new File(dataDir, ".manifest.json"), new Rect(0, 0, width, height));
-		
+
 		exec.shutdown();
 		exec.awaitTermination(10, TimeUnit.MINUTES);
 	}

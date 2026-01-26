@@ -3,6 +3,7 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -58,7 +59,7 @@ import lu.kbra.standalone.gameengine.utils.transform.Transform3D;
 public class BALogic extends GameLogic {
 
 	private static final int FRAME_COUNT = 6572;
-	private static final int PART_COUNT = 2500;
+	private static final int PART_COUNT = 12_000;
 	private static final int HISTORY_LEN = 6572;
 
 	public final WorkerDispatcher WORKERS = new WorkerDispatcher("WORKERS", 8);
@@ -162,10 +163,10 @@ public class BALogic extends GameLogic {
 //				.push();
 
 		lineGraph.setBackground(Color.WHITE);
-		lineGraph.setFixedPadding(40);
+		lineGraph.setFixedPadding(55);
 		lineGraph.setUseFixedPadding(true);
 		lineGraph.setMinorAxisStep(500);
-
+		
 //		final ChartData totalCount = lineGraph.createSeries("Total instances");
 //		totalCount.setFill(true);
 //		totalCount.setFillColor(Color.RED);

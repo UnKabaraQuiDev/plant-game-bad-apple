@@ -29,7 +29,7 @@ public class BAExportMain {
 		Frame frame;
 		int index = 0;
 
-		final int factor = 2;
+		final int factor = 1;
 
 		while ((frame = grabber.grabImage()) != null) {
 			final BufferedImage img = converter.convert(frame);
