@@ -27,7 +27,7 @@
 
 		<dependency>
 			<groupId>lu.kbra</groupId>
-			<artifactId>plant-game</artifactId>
+			<artifactId>plant-game-core</artifactId>
 			<version>0.1</version>
 		</dependency>
 	</dependencies>
