@@ -28,7 +28,6 @@ import lu.pcy113.pclib.pointer.prim.IntPointer;
 import lu.pcy113.pclib.swing.JLineGraph;
 import lu.pcy113.pclib.swing.JLineGraph.ChartData;
 
-import lu.kbra.plant_game.GameObjectRegistry;
 import lu.kbra.plant_game.engine.UpdateFrameState;
 import lu.kbra.plant_game.engine.data.locale.LocalizationService;
 import lu.kbra.plant_game.engine.entity.go.GameObject;
@@ -43,6 +42,7 @@ import lu.kbra.plant_game.engine.util.InternalConstructorFunction;
 import lu.kbra.plant_game.engine.util.annotation.DataPath;
 import lu.kbra.plant_game.engine.window.input.MappingInputHandler;
 import lu.kbra.plant_game.generated.ColorMaterial;
+import lu.kbra.plant_game.plugin.registry.GameObjectRegistry;
 import lu.kbra.standalone.gameengine.audio.ALSourcePool;
 import lu.kbra.standalone.gameengine.audio.Sound;
 import lu.kbra.standalone.gameengine.cache.attrib.UByteAttribArray;
