@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 
 import javax.imageio.ImageIO;
 
-import lu.pcy113.pclib.PCUtils;
+import lu.kbra.pclib.PCUtils;
 
 public class BAComputeMain {
 
@@ -20,7 +20,7 @@ public class BAComputeMain {
 	private static final int MIN_SIZE = 1;
 
 	protected static int width;
-	protected static int height;;
+	protected static int height;
 
 	public static void main(String[] args) throws Exception {
 		final File exportDir = new File("./.local/export/");
